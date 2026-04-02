@@ -1,0 +1,139 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+  library(harmony)
+  library(ComplexHeatmap)
+  library(UCell)
+  library(msigdbr)
+  library(clusterProfiler)
+  library(ggrepel)
+  library(ggpubr)
+})
+
+load("Bcell_subclustered.Rdata")
+
+Bcell <- RunHarmony(Bcell, group.by.vars = "orig.ident")
+Bcell <- RunUMAP(Bcell, reduction = "harmony", dims = 1:10)
+Bcell <- FindNeighbors(Bcell, reduction = "harmony", dims = 1:10)
+Bcell <- FindClusters(Bcell, resolution = 0.8)
+
+bcell_markers <- c(
+  "CD79A", "CD79B", "CD19",
+  "MS4A1", "TCL1A", "CD24",
+  "ITGAX",
+  "NEIL1", "FAS",
+  "GPR183", "CD27", "IGHM", "IGHD",
+  "MKI67", "CD38", "IRF4", "TXNDC5", "MYDGF", "HMGB2",
+  "PRDM1", "XBP1", "MZB1", "JCHAIN",
+  "IGHA1", "IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4"
+)
+
+p_dot <- DotPlot(Bcell, group.by = "seurat_clusters", features = bcell_markers) + coord_flip()
+ggsave("Bcell_marker_dotplot.pdf", p_dot, width = 12, height = 8)
+
+bcell_ids <- c(
+  "0" = "TCL1A_Bn",
+  "1" = "IGHA_PC",
+  "2" = "unswitched_Bm",
+  "3" = "TCL1A_Bn",
+  "4" = "FYB1_Bn",
+  "5" = "Transitional_PB",
+  "6" = "FAM129C_Bn",
+  "7" = "MKI67_PB",
+  "8" = "Transitional_PB",
+  "9" = "IGHG_PC",
+  "10" = "TCL1A_Bn",
+  "11" = "switched_Bm",
+  "12" = "MKI67_PB",
+  "13" = "MKI67_PB",
+  "14" = "IGHM_PC",
+  "15" = "IGHA_PC"
+)
+
+Bcell <- RenameIdents(Bcell, bcell_ids)
+Bcell$celltype3 <- Idents(Bcell)
+
+ggsave("Bcell_celltype3_umap.pdf", DimPlot(Bcell, group.by = "celltype3"), width = 8, height = 6)
+
+Bcell <- JoinLayers(Bcell)
+Idents(Bcell) <- "celltype3"
+bcell_all_markers <- FindAllMarkers(Bcell, only.pos = TRUE, min.pct = 0.1, thresh.use = 0.2)
+write.csv(bcell_all_markers, "Bcell_celltype3_markers.csv", row.names = FALSE)
+
+ratio_bcell <- Bcell@meta.data %>%
+  group_by(group, celltype3) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(group) %>%
+  mutate(freq = n / sum(n) * 100)
+
+ggplot(ratio_bcell, aes(group, freq, fill = celltype3)) +
+  geom_col() +
+  theme_classic()
+ggsave("Bcell_ratio_by_group.pdf", width = 8, height = 5)
+
+Idents(Bcell) <- "group"
+deg_death_vs_live <- FindMarkers(
+  Bcell,
+  ident.1 = "DEATH",
+  ident.2 = "LIVE",
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+deg_death_vs_live$gene <- rownames(deg_death_vs_live)
+write.csv(deg_death_vs_live, "Bcell_DEATH_vs_LIVE.csv", row.names = FALSE)
+
+volcano_data <- deg_death_vs_live %>%
+  mutate(
+    regulation = case_when(
+      avg_log2FC > 0.25 & p_val_adj < 0.05 ~ "Upregulated",
+      avg_log2FC < -0.25 & p_val_adj < 0.05 ~ "Downregulated",
+      TRUE ~ "Not Significant"
+    )
+  )
+
+ggplot(volcano_data, aes(avg_log2FC, -log10(p_val_adj), color = regulation)) +
+  geom_point(alpha = 0.8, size = 2) +
+  scale_color_manual(values = c("Upregulated" = "red", "Downregulated" = "blue", "Not Significant" = "grey")) +
+  theme_minimal()
+ggsave("Bcell_volcano_DEATH_vs_LIVE.pdf", width = 7, height = 6)
+
+gene_list <- deg_death_vs_live$avg_log2FC
+names(gene_list) <- rownames(deg_death_vs_live)
+gene_list <- sort(gene_list, decreasing = TRUE)
+gene_list <- gene_list[!duplicated(names(gene_list))]
+
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+gsea_res <- GSEA(geneList = gene_list, TERM2GENE = hallmark_sets, pvalueCutoff = 0.25)
+write.csv(as.data.frame(gsea_res), "Bcell_GSEA_hallmark.csv", row.names = FALSE)
+
+markers_list <- list(
+  bcr_pathway = c("BTK", "CD79A", "CD79B", "SYK", "LYN"),
+  b_cell_activation = c("CD40", "CD40LG", "CD80", "FAS", "HLA-DRA"),
+  apoptosis = c("BAX", "CASP3", "FAS", "TNF", "TXNIP")
+)
+
+Bcell <- AddModuleScore_UCell(Bcell, features = markers_list)
+
+score_df <- FetchData(Bcell, vars = c("group", "bcr_pathway_UCell"))
+ggplot(score_df, aes(group, bcr_pathway_UCell, fill = group)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1) +
+  theme_bw()
+ggsave("Bcell_bcr_pathway_score_by_group.pdf", width = 6, height = 5)
+
+feature_genes <- c("TCL1A", "IGHD", "CD27", "GPR183", "MKI67", "XBP1", "CD38", "IGHG1", "IGHA1")
+feature_plots <- lapply(feature_genes, function(g) {
+  FeaturePlot(Bcell, features = g, reduction = "umap") + ggtitle(g)
+})
+pdf("Bcell_feature_umap_panels.pdf", width = 12, height = 10)
+wrap_plots(feature_plots, ncol = 3)
+dev.off()
+
+save(Bcell, file = "Bcell_annotated_analysis_ready.Rdata")
