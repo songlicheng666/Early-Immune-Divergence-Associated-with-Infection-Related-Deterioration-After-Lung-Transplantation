@@ -1,0 +1,96 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+  library(ggrepel)
+  library(readxl)
+  library(forcats)
+})
+
+load("NEU_subclustered.Rdata")
+
+neu_markers <- c(
+  "SELL", "P2RY13", "CXCR2", "CXCR1",
+  "CXCR4", "CD83", "ICAM1",
+  "MAPK6", "HIF1A", "NFKBIZ",
+  "IFIT2", "RSAD2", "ISG15",
+  "LTF", "CD24", "LCN2", "RETN"
+)
+
+p_dot <- DotPlot(NEU, group.by = "seurat_clusters", features = neu_markers) + coord_flip()
+ggsave("NEU_marker_dotplot.pdf", p_dot, width = 10, height = 8)
+
+neu_ids <- c(
+  "0" = "CXCR2_Mature",
+  "1" = "IFN_Mature",
+  "2" = "NFKB_Mature",
+  "3" = "NFKB_Mature",
+  "4" = "NFKB_Mature",
+  "5" = "CXCR2_Mature",
+  "6" = "CXCR2_Mature",
+  "7" = "NFKB_Mature",
+  "8" = "CXCR2_Mature",
+  "9" = "IFN_Mature",
+  "10" = "NFKB_Mature",
+  "11" = "Immature",
+  "12" = "CXCR2_Mature",
+  "13" = "NFKB_Mature",
+  "14" = "Immature",
+  "15" = "Immature",
+  "16" = "CXCR2_Mature",
+  "17" = "CXCR2_Mature",
+  "18" = "IFN_Mature"
+)
+
+NEU <- RenameIdents(NEU, neu_ids)
+NEU$celltype3 <- Idents(NEU)
+
+ggsave("NEU_celltype3_umap.pdf", DimPlot(NEU, group.by = "celltype3"), width = 8, height = 6)
+
+ratio_neu <- NEU@meta.data %>%
+  group_by(orig.ident, celltype3) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(orig.ident) %>%
+  mutate(proportion = count / sum(count))
+
+write.csv(ratio_neu, "NEU_subtype_proportion_by_sample.csv", row.names = FALSE)
+
+T2 <- subset(NEU, subset = time1 == "T2")
+Idents(T2) <- "group"
+
+deg_t2 <- FindMarkers(
+  T2,
+  ident.1 = "DEATH",
+  ident.2 = "LIVE",
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+deg_t2$gene <- rownames(deg_t2)
+write.csv(deg_t2, "NEU_T2_DEATH_vs_LIVE.csv", row.names = FALSE)
+
+volcano_data <- deg_t2 %>%
+  mutate(
+    regulation = case_when(
+      avg_log2FC >= 0.25 & p_val_adj < 0.05 ~ "Up",
+      avg_log2FC <= -0.25 & p_val_adj < 0.05 ~ "Down",
+      TRUE ~ "NS"
+    )
+  )
+
+label_data <- volcano_data %>%
+  filter(regulation != "NS") %>%
+  arrange(p_val_adj) %>%
+  slice_head(n = 20)
+
+ggplot(volcano_data, aes(avg_log2FC, -log10(p_val_adj), color = regulation)) +
+  geom_point(alpha = 0.6) +
+  geom_text_repel(data = label_data, aes(label = gene), size = 3) +
+  scale_color_manual(values = c("Up" = "#E41A1C", "Down" = "#377EB8", "NS" = "grey70")) +
+  theme_classic()
+ggsave("NEU_T2_volcano.pdf", width = 8, height = 8)
+
+save(NEU, file = "NEU_annotated_analysis_ready.Rdata")
