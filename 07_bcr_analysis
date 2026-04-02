@@ -1,0 +1,122 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(scRepertoire)
+  library(immunarch)
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(stringr)
+  library(alakazam)
+  library(shazam)
+  library(ggpubr)
+})
+
+bcr_files <- c(
+  "LT_DEATH_P1_D1.csv", "LT_DEATH_P1_D2.csv", "LT_DEATH_P1_D7.csv", "LT_DEATH_P1_D52.csv",
+  "LT_DEATH_P2_D1.csv", "LT_DEATH_P4_D1.csv",
+  "LT_LIVE_P5_D1.csv", "LT_LIVE_P5_D2.csv", "LT_LIVE_P5_D7.csv", "LT_LIVE_P5_D14.csv",
+  "LT_LIVE_P6_D1.csv", "LT_LIVE_P6_D2.csv", "LT_LIVE_P6_D7.csv", "LT_LIVE_P6_D14.csv",
+  "LT_LIVE_P7_D1.csv", "LT_LIVE_P7_D2.csv", "LT_LIVE_P7_D7.csv", "LT_LIVE_P7_D14.csv",
+  "LT_DEATH_P8_D1.csv", "LT_DEATH_P8_D2.csv", "LT_DEATH_P8_D7.csv",
+  "LT_LIVE_P9_D1.csv", "LT_LIVE_P9_D2.csv", "LT_LIVE_P9_D7.csv", "LT_LIVE_P9_D14.csv",
+  "LT_LIVE_P10_D1.csv", "LT_LIVE_P10_D2.csv", "LT_LIVE_P10_D7.csv", "LT_LIVE_P10_D14.csv",
+  "LT_LIVE_P11_D1.csv", "LT_LIVE_P11_D2.csv", "LT_LIVE_P11_D14.csv",
+  "LT_LIVE_P12_D1.csv", "LT_LIVE_P12_D2.csv", "LT_LIVE_P12_D7.csv", "LT_LIVE_P12_D14.csv",
+  "LT_LIVE_P13_D1.csv", "LT_LIVE_P13_D2.csv", "LT_LIVE_P13_D7.csv", "LT_LIVE_P13_D14.csv",
+  "CSL-20230706-blood-BCR.csv", "LGY_20230320_blood_BCR.csv", "wzy_20230320_blood_1_BCR.csv",
+  "YZL_20230321_blood_1_BCR.csv", "ZTL-20230706-blood-BCR.csv"
+)
+
+contig_list <- lapply(bcr_files, read.csv)
+save(contig_list, file = "contig_list.RData")
+
+sample_names <- paste0("P", seq_along(contig_list))
+sample_groups <- c(
+  "DEATH", "DEATH", "DEATH", "DEATH", "DEATH", "DEATH",
+  rep("LIVE", 12), "DEATH", "DEATH", "DEATH", "DEATH", "DEATH", "DEATH", "DEATH",
+  rep("LIVE", 19), rep("CONTROL", 5)
+)
+
+combined <- combineBCR(
+  contig_list,
+  samples = sample_names,
+  ID = sample_groups,
+  threshold = 0.85
+)
+
+time_points <- c(
+  "T0", "T1", "T2", "T3", "T0", "T0",
+  "T0", "T1", "T2", "T3", "T0", "T1", "T2", "T3",
+  "T0", "T1", "T2", "T3",
+  "T0", "T1", "T2",
+  "T0", "T1", "T2", "T3",
+  "T0", "T1", "T2", "T3",
+  "T0", "T1", "T3",
+  "T0", "T1", "T2", "T3",
+  "T0", "T1", "T2", "T3",
+  rep("Control", 5)
+)
+
+combined <- addVariable(combined, variable.name = "Time", variables = time_points)
+save(combined, file = "combined_BCR.RData")
+
+p_quant <- clonalQuant(combined, cloneCall = "gene", group = "ID", scale = TRUE)
+ggsave("BCR_clonal_quant_by_group.pdf", p_quant, width = 8, height = 5)
+
+p_homeo <- clonalHomeostasis(combined, cloneCall = "gene", group = "Time")
+ggsave("BCR_clonal_homeostasis_by_time.pdf", p_homeo, width = 8, height = 5)
+
+p_prop <- clonalProportion(combined, cloneCall = "gene", group = "Time")
+ggsave("BCR_clonal_proportion_by_time.pdf", p_prop, width = 8, height = 5)
+
+p_div <- clonalDiversity(combined, cloneCall = "gene", group = "sample", n.boots = 100)
+ggsave("BCR_clonal_diversity_by_sample.pdf", p_div, width = 8, height = 5)
+
+load("Bcell_annotated_analysis_ready.Rdata")
+
+combined_barcodes <- unlist(lapply(combined, function(x) x$barcode))
+common_barcodes <- intersect(combined_barcodes, colnames(Bcell))
+Bcell_filtered <- Bcell[, colnames(Bcell) %in% common_barcodes]
+combined_filtered <- combined[unlist(lapply(combined, function(x) any(x$barcode %in% common_barcodes)))]
+combined_filtered_df <- do.call(rbind, combined_filtered)
+combined_filtered_df <- combined_filtered_df[combined_filtered_df$barcode %in% colnames(Bcell_filtered), ]
+combined_filtered_df <- list(combined_filtered_df = combined_filtered_df)
+
+scBCR_RNA <- combineExpression(
+  input.data = combined_filtered_df,
+  sc.data = Bcell_filtered,
+  cloneCall = "gene+nt",
+  proportion = FALSE,
+  filterNA = FALSE,
+  cloneSize = c(Single = 1, Small = 3, Medium = 10, Large = 30, Hyperexpanded = 100)
+)
+
+scBCR_RNA$BCR_known <- ifelse(is.na(scBCR_RNA$cloneType), "no", "yes")
+scBCR_RNA$both_chains <- ifelse(is.na(scBCR_RNA$CTaa) | grepl("NA", scBCR_RNA$CTgene), "no", "yes")
+
+heavychains <- sapply(strsplit(ifelse(is.na(scBCR_RNA$CTgene), "NA_NA", scBCR_RNA$CTgene), "_"), function(x) x[1])
+isotype_df <- data.frame(heavychains = heavychains)
+isotype_df$Isotype <- "unknown"
+isotype_df$Isotype[grep("IGHA1", isotype_df$heavychains)] <- "IGHA1"
+isotype_df$Isotype[grep("IGHA2", isotype_df$heavychains)] <- "IGHA2"
+isotype_df$Isotype[grep("IGHG1", isotype_df$heavychains)] <- "IGHG1"
+isotype_df$Isotype[grep("IGHG2", isotype_df$heavychains)] <- "IGHG2"
+isotype_df$Isotype[grep("IGHG3", isotype_df$heavychains)] <- "IGHG3"
+isotype_df$Isotype[grep("IGHG4", isotype_df$heavychains)] <- "IGHG4"
+isotype_df$Isotype[grep("IGHM", isotype_df$heavychains)] <- "IGHM"
+isotype_df$Isotype[grep("IGHD", isotype_df$heavychains)] <- "IGHD"
+
+scBCR_RNA$Isotype <- isotype_df$Isotype
+scBCR_RNA <- subset(scBCR_RNA, subset = Isotype != "unknown")
+
+saveRDS(scBCR_RNA, file = "scBCR_RNA.rds")
+
+ggsave("scBCR_RNA_isotype_umap.pdf", DimPlot(scBCR_RNA, group.by = "Isotype"), width = 8, height = 6)
+ggsave("scBCR_RNA_cloneSize_umap.pdf", DimPlot(scBCR_RNA, group.by = "cloneSize"), width = 8, height = 6)
+
+db <- subset(scBCR_RNA@meta.data, Isotype %in% c("IGHA1", "IGHA2", "IGHG1", "IGHG2", "IGHG3", "IGHG4", "IGHD", "IGHM"))
+write.csv(db, "BCR_metadata_for_SHM.csv", row.names = FALSE)
+
+save(scBCR_RNA, file = "scBCR_RNA_ready_for_SHM.Rdata")
