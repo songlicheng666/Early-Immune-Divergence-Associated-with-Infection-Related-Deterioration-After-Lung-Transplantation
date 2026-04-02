@@ -1,0 +1,42 @@
+# Project Overview
+
+This project analyzes longitudinal PBMC single-cell RNA-seq data with matched BCR repertoire data.
+
+## Study design
+
+Samples are grouped into:
+
+- Control
+- Death
+- Live
+
+Time points include:
+
+- Control
+- T0
+- T1
+- T2
+- T3
+
+## Objectives
+
+- define immune cell composition changes over time
+- identify major and fine-grained immune cell states
+- characterize B-cell differentiation states
+- compare death vs live trajectories
+- analyze BCR clonotype expansion, diversity, isotype usage, and SHM
+
+## Data modalities
+
+- 10X Genomics scRNA-seq
+- BCR repertoire contig tables
+
+## Main outputs
+
+- integrated Seurat object
+- annotated major and minor cell types
+- composition plots
+- DEG tables
+- GSEA and GO enrichment results
+- clonotype and isotype summaries
+- SHM summary tables and plots
