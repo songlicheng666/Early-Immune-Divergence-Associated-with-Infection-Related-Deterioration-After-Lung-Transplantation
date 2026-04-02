@@ -1,0 +1,42 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+})
+
+load("PBMC_LT_major_annotated.Rdata")
+
+run_basic_subclustering <- function(seu, dims = 1:30, resolution = 0.8, regress_var = "percent.mt") {
+  seu <- NormalizeData(seu)
+  seu <- FindVariableFeatures(seu)
+  seu <- ScaleData(seu, vars.to.regress = regress_var)
+  seu <- RunPCA(seu)
+  seu <- FindNeighbors(seu, dims = dims)
+  seu <- FindClusters(seu, resolution = resolution)
+  seu <- RunUMAP(seu, dims = dims, umap.method = "uwot")
+  return(seu)
+}
+
+NEU <- subset(pbmc_lt, subset = celltype %in% c("NEU", "IMM_NEU"))
+MON <- subset(pbmc_lt, subset = celltype %in% c("MON"))
+Bcell <- subset(pbmc_lt, subset = celltype %in% c("B"))
+Tcell <- subset(pbmc_lt, subset = celltype %in% c("T"))
+
+NEU <- run_basic_subclustering(NEU, dims = 1:30, resolution = 0.2)
+MON <- run_basic_subclustering(MON, dims = 1:30, resolution = 0.8)
+Bcell <- run_basic_subclustering(Bcell, dims = 1:15, resolution = 0.8)
+Tcell <- run_basic_subclustering(Tcell, dims = 1:15, resolution = 0.8)
+
+ggsave("NEU_subclustering_umap.pdf", DimPlot(NEU, label = TRUE, raster = FALSE), width = 7, height = 6)
+ggsave("MON_subclustering_umap.pdf", DimPlot(MON, label = TRUE, raster = FALSE), width = 7, height = 6)
+ggsave("Bcell_subclustering_umap.pdf", DimPlot(Bcell, label = TRUE, raster = FALSE), width = 7, height = 6)
+ggsave("Tcell_subclustering_umap.pdf", DimPlot(Tcell, label = TRUE, raster = FALSE), width = 7, height = 6)
+
+save(NEU, file = "NEU_subclustered.Rdata")
+save(MON, file = "MON_subclustered.Rdata")
+save(Bcell, file = "Bcell_subclustered.Rdata")
+save(Tcell, file = "Tcell_subclustered.Rdata")
