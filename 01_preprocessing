@@ -1,0 +1,138 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(Matrix)
+  library(stringr)
+  library(ggplot2)
+  library(patchwork)
+  library(SeuratWrappers)
+  library(clustree)
+})
+
+parse_metadata_from_colnames <- function(seu, split_char = "_") {
+  meta_split <- stringr::str_split(colnames(seu), pattern = split_char, simplify = TRUE)
+  seu$group <- meta_split[, 1]
+  if (ncol(meta_split) >= 2) seu$outcome <- meta_split[, 2]
+  if (ncol(meta_split) >= 3) seu$number <- meta_split[, 3]
+  if (ncol(meta_split) >= 4) seu$time <- meta_split[, 4]
+  return(seu)
+}
+
+add_qc_metrics <- function(seu) {
+  seu[["percent.mt"]] <- PercentageFeatureSet(seu, pattern = "^MT-")
+  seu[["percent.hb"]] <- PercentageFeatureSet(seu, pattern = "^HB[^(P)]")
+  seu[["percent.rb"]] <- PercentageFeatureSet(seu, pattern = "^RPS|RPL")
+  return(seu)
+}
+
+filter_cells <- function(seu) {
+  subset(
+    seu,
+    subset = nFeature_RNA > 200 &
+      nFeature_RNA < 6000 &
+      nCount_RNA < 30000 &
+      percent.mt < 5
+  )
+}
+
+read_create_seurat <- function(data_dir, project_name, min_cells = 3, min_features = 200) {
+  x <- Read10X(data.dir = data_dir)
+  CreateSeuratObject(
+    counts = x,
+    project = project_name,
+    min.cells = min_cells,
+    min.features = min_features
+  )
+}
+
+sample_paths <- list(
+  LT_DEATH_P1_D1 = "~/LT-rawdata/LT-1-death/D1 raw_feature_bc_matrix",
+  LT_DEATH_P1_D2 = "~/LT-rawdata/LT-1-death/D2 raw_feature_bc_matrix",
+  LT_DEATH_P1_D7 = "~/LT-rawdata/LT-1-death/D7 raw_feature_bc_matrix",
+  LT_DEATH_P1_D52 = "~/LT-rawdata/LT-1-death/D52 raw_feature_bc_matrix",
+  LT_DEATH_P2_D1 = "~/LT-rawdata/LT-2-death",
+  LT_DEATH_P4_D1 = "~/LT-rawdata/LT-4-death",
+  LT_LIVE_P5_D1 = "~/LT-rawdata/LT-5-LIVE/D1 raw_feature_bc_matrix",
+  LT_LIVE_P5_D2 = "~/LT-rawdata/LT-5-LIVE/D2 raw_feature_bc_matrix",
+  LT_LIVE_P5_D7 = "~/LT-rawdata/LT-5-LIVE/D7 raw_feature_bc_matrix",
+  LT_LIVE_P5_D14 = "~/LT-rawdata/LT-5-LIVE/D14 raw_feature_bc_matrix",
+  LT_LIVE_P6_D1 = "~/LT-rawdata/LT-6-LIVE/D1 raw_feature_bc_matrix",
+  LT_LIVE_P6_D2 = "~/LT-rawdata/LT-6-LIVE/D2 raw_feature_bc_matrix",
+  LT_LIVE_P6_D7 = "~/LT-rawdata/LT-6-LIVE/D7 raw_feature_bc_matrix",
+  LT_LIVE_P6_D14 = "~/LT-rawdata/LT-6-LIVE/D14 raw_feature_bc_matrix",
+  LT_LIVE_P7_D1 = "~/LT-rawdata/LT-7-LIVE/D1 raw_feature_bc_matrix",
+  LT_LIVE_P7_D2 = "~/LT-rawdata/LT-7-LIVE/D2 raw_feature_bc_matrix",
+  LT_LIVE_P7_D7 = "~/LT-rawdata/LT-7-LIVE/D7 raw_feature_bc_matrix",
+  LT_LIVE_P7_D14 = "~/LT-rawdata/LT-7-LIVE/D14 raw_feature_bc_matrix",
+  LT_DEATH_P8_D1 = "~/LT-rawdata/LT-8-death/D1 raw_feature_bc_matrix/raw_feature_bc_matrix",
+  LT_DEATH_P8_D2 = "~/LT-rawdata/LT-8-death/D2 raw_feature_bc_matrix/raw_feature_bc_matrix",
+  LT_DEATH_P8_D7 = "~/LT-rawdata/LT-8-death/D7 raw_feature_bc_matrix/raw_feature_bc_matrix"
+)
+
+seu_list <- lapply(names(sample_paths), function(nm) {
+  message("Reading: ", nm)
+  seu <- read_create_seurat(sample_paths[[nm]], nm)
+  seu <- parse_metadata_from_colnames(seu)
+  seu <- add_qc_metrics(seu)
+  seu <- filter_cells(seu)
+  return(seu)
+})
+names(seu_list) <- names(sample_paths)
+
+pbmc_lt <- merge(
+  x = seu_list[[1]],
+  y = seu_list[-1],
+  add.cell.ids = names(seu_list),
+  project = "PBMC_LT"
+)
+
+pbmc_lt <- parse_metadata_from_colnames(pbmc_lt)
+save(pbmc_lt, file = "PBMC_LT_raw_filtered.Rdata")
+
+qc_plot <- VlnPlot(
+  pbmc_lt,
+  features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.hb", "percent.rb"),
+  pt.size = 0.1,
+  ncol = 5,
+  assay = "RNA",
+  layer = "counts"
+)
+ggsave("PBMC_LT_QC_violin.pdf", plot = qc_plot, width = 16, height = 5)
+
+pbmc_lt <- NormalizeData(pbmc_lt)
+pbmc_lt <- FindVariableFeatures(pbmc_lt)
+pbmc_lt <- ScaleData(pbmc_lt, vars.to.regress = "percent.mt")
+pbmc_lt <- RunPCA(pbmc_lt, verbose = FALSE)
+
+pbmc_lt <- IntegrateLayers(
+  object = pbmc_lt,
+  method = HarmonyIntegration,
+  orig.reduction = "pca",
+  new.reduction = "integrated.harmony",
+  verbose = FALSE
+)
+
+pbmc_lt <- FindNeighbors(pbmc_lt, reduction = "integrated.harmony", dims = 1:20)
+pbmc_lt <- FindClusters(pbmc_lt, resolution = 0.8)
+pbmc_lt <- RunUMAP(pbmc_lt, reduction = "integrated.harmony", dims = 1:20)
+
+save(pbmc_lt, file = "PBMC_LT_integrated.Rdata")
+
+avg_expr <- AverageExpression(pbmc_lt, group.by = "orig.ident", layer = "data")$RNA
+expr_mat <- t(avg_expr)
+expr_mat <- expr_mat[, apply(expr_mat, 2, sd) != 0]
+pca_res <- prcomp(expr_mat, scale. = TRUE)
+
+pca_df <- as.data.frame(pca_res$x)
+pca_df$sample_id <- rownames(pca_df)
+
+ggplot(pca_df, aes(PC1, PC2)) +
+  geom_point(size = 3) +
+  geom_text(aes(label = sample_id), size = 2.5, vjust = -1) +
+  theme_minimal()
+
+ggsave("sample_level_pca.pdf", width = 7, height = 6)
+write.csv(pca_df, "sample_level_pca.csv", row.names = FALSE)
