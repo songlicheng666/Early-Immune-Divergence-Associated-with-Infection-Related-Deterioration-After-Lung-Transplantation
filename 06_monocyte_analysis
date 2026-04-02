@@ -1,0 +1,89 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+  library(ComplexHeatmap)
+  library(circlize)
+})
+
+load("MON_subclustered.Rdata")
+
+mon_markers <- c("S100A8", "CD14", "FCGR3A")
+p_dot <- DotPlot(MON, group.by = "seurat_clusters", features = mon_markers) + coord_flip()
+ggsave("MON_marker_dotplot.pdf", p_dot, width = 8, height = 5)
+
+mon_ids <- c(
+  "0" = "inter_MC",
+  "1" = "CD14_MC",
+  "2" = "CD14_MC",
+  "3" = "inter_MC",
+  "4" = "CD14_MC",
+  "5" = "CD14_MC",
+  "6" = "inter_MC",
+  "7" = "inter_MC",
+  "8" = "CD14_MC",
+  "9" = "CD14_MC",
+  "10" = "inter_MC",
+  "11" = "CD14_MC",
+  "12" = "CD14_MC",
+  "13" = "CD14_MC",
+  "14" = "CD16_MC",
+  "15" = "CD14_MC",
+  "16" = "CD14_MC",
+  "17" = "CD14_MC",
+  "18" = "inter_MC",
+  "19" = "CD16_MC",
+  "20" = "CD14_MC",
+  "21" = "CD14_MC",
+  "22" = "inter_MC",
+  "23" = "inter_MC",
+  "24" = "CD14_MC",
+  "25" = "CD14_MC",
+  "26" = "inter_MC",
+  "27" = "CD16_MC",
+  "28" = "CD14_MC"
+)
+
+MON <- RenameIdents(MON, mon_ids)
+MON$celltype3 <- Idents(MON)
+
+ggsave("MON_celltype3_umap.pdf", DimPlot(MON, group.by = "celltype3"), width = 8, height = 6)
+
+ratio_mon <- MON@meta.data %>%
+  group_by(orig.ident, celltype3) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(orig.ident) %>%
+  mutate(proportion = count / sum(count))
+
+write.csv(ratio_mon, "MON_subtype_proportion_by_sample.csv", row.names = FALSE)
+
+genes <- c("S100A9", "HLA-DRA", "HLA-DRB1", "CD83", "CD163", "IFI6", "ISG15", "PLAC8", "CLEC7A")
+expr <- AverageExpression(MON, features = genes, group.by = "celltype3")$RNA
+expr_mat <- as.matrix(expr)
+
+col_fun <- colorRamp2(c(0, 2, 5), c("navy", "white", "firebrick"))
+
+pdf("MON_marker_heatmap.pdf", width = 8, height = 6)
+Heatmap(
+  expr_mat,
+  name = "Expression",
+  col = col_fun,
+  cluster_rows = FALSE,
+  cluster_columns = FALSE,
+  show_row_dend = FALSE,
+  show_column_dend = FALSE
+)
+dev.off()
+
+ggsave(
+  "MON_TNFSF13B_violin.pdf",
+  VlnPlot(MON, features = "TNFSF13B", group.by = "time1", split.by = "group", pt.size = 0),
+  width = 7,
+  height = 5
+)
+
+save(MON, file = "MON_annotated_analysis_ready.Rdata")
