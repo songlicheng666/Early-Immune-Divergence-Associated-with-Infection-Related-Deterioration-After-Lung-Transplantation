@@ -1,0 +1,101 @@
+rm(list = ls())
+options(stringsAsFactors = FALSE)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(ggplot2)
+  library(patchwork)
+})
+
+load("PBMC_LT_integrated.Rdata")
+
+Idents(pbmc_lt) <- "seurat_clusters"
+
+major_markers <- c(
+  "PPBP", "PF4",
+  "HBA2", "HBB",
+  "CD3D", "CD3G", "CD3E",
+  "CD79A", "CD79B", "CD19",
+  "CD38", "XBP1", "PRDM1", "JCHAIN",
+  "CD68", "MAFB", "CD14", "S100A8",
+  "FCGR3B", "G0S2",
+  "LTF", "CD24", "LCN2", "RETN",
+  "CD4", "CCR7", "SELL", "S100A4",
+  "CD8A", "CD8B", "GZMK", "GZMB",
+  "LAG3", "TIGIT",
+  "GZMA", "GZMH",
+  "LEF1", "IL7R"
+)
+
+p_dot <- DotPlot(pbmc_lt, features = major_markers) + coord_flip()
+ggsave("major_marker_dotplot.pdf", p_dot, width = 12, height = 10)
+
+pbmc_lt <- JoinLayers(pbmc_lt)
+all_markers <- FindAllMarkers(pbmc_lt, only.pos = TRUE, min.pct = 0.1, thresh.use = 0.2)
+write.csv(all_markers, "major_cluster_markers.csv", row.names = FALSE)
+
+new_cluster_ids <- c(
+  "0" = "NEU",
+  "1" = "NEU",
+  "2" = "NEU",
+  "3" = "NEU",
+  "4" = "T",
+  "5" = "MON",
+  "6" = "T",
+  "7" = "NEU",
+  "8" = "IMM_NEU",
+  "9" = "B",
+  "10" = "MEGA",
+  "11" = "ERY",
+  "12" = "B",
+  "13" = "T",
+  "14" = "B",
+  "15" = "NEU",
+  "16" = "NEU"
+)
+
+pbmc_lt <- RenameIdents(pbmc_lt, new_cluster_ids)
+pbmc_lt$celltype <- Idents(pbmc_lt)
+
+p_umap <- DimPlot(pbmc_lt, reduction = "umap", group.by = "celltype", label = TRUE, raster = FALSE)
+ggsave("major_celltype_umap.pdf", p_umap, width = 8, height = 6)
+
+save(pbmc_lt, file = "PBMC_LT_major_annotated.Rdata")
+
+pbmc_lt$time1 <- as.character(pbmc_lt$time)
+pbmc_lt$time1[pbmc_lt$time1 %in% c("CON")] <- "Control"
+pbmc_lt$time1[pbmc_lt$time1 %in% c("D1")] <- "T0"
+pbmc_lt$time1[pbmc_lt$time1 %in% c("D2")] <- "T1"
+pbmc_lt$time1[pbmc_lt$time1 %in% c("D7")] <- "T2"
+pbmc_lt$time1[pbmc_lt$time1 %in% c("D14", "D52")] <- "T3"
+
+ratio_by_group <- pbmc_lt@meta.data %>%
+  group_by(group, celltype) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(group) %>%
+  mutate(freq = n / sum(n) * 100)
+
+ggplot(ratio_by_group, aes(group, freq, fill = celltype)) +
+  geom_col() +
+  theme_classic()
+ggsave("major_celltype_ratio_by_group.pdf", width = 7, height = 5)
+
+ratio_by_time <- pbmc_lt@meta.data %>%
+  group_by(time1, celltype) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(time1) %>%
+  mutate(freq = n / sum(n) * 100)
+
+ggplot(ratio_by_time, aes(time1, freq, fill = celltype)) +
+  geom_col() +
+  theme_classic()
+ggsave("major_celltype_ratio_by_time.pdf", width = 7, height = 5)
+
+ratio_by_sample <- pbmc_lt@meta.data %>%
+  group_by(orig.ident, celltype) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(orig.ident) %>%
+  mutate(freq = n / sum(n) * 100)
+
+write.csv(ratio_by_sample, "major_celltype_ratio_by_sample.csv", row.names = FALSE)
