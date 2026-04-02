@@ -1,0 +1,55 @@
+# Analysis Workflow
+
+## Step 1. Raw data import and Seurat object generation
+Raw 10X matrices are read using `Read10X()` and converted into Seurat objects using `CreateSeuratObject()`.
+
+## Step 2. Metadata parsing
+Sample-level metadata are parsed from sample names, including:
+
+- group
+- outcome
+- patient number
+- time point
+
+## Step 3. Quality control
+QC metrics include:
+
+- number of detected genes
+- number of UMIs
+- mitochondrial percentage
+- hemoglobin percentage
+- ribosomal percentage
+
+Cells are filtered using predefined thresholds.
+
+## Step 4. Data normalization and integration
+Data are normalized, variable genes are identified, and PCA is performed. Batch correction / integration is performed using Harmony or other integration methods.
+
+## Step 5. Major cell type annotation
+Clusters are annotated into major lineages using canonical marker genes.
+
+## Step 6. Subclustering
+Major lineages are subset and reclustered independently, including:
+
+- neutrophils
+- monocytes
+- B cells
+- T cells
+
+## Step 7. Cell proportion analysis
+Cell-type proportions are summarized by group, time point, and sample.
+
+## Step 8. Functional analyses
+Functional analyses include:
+
+- DEG analysis
+- GSEA
+- GO enrichment
+- module scoring
+- marker gene visualization
+
+## Step 9. BCR integration and repertoire analysis
+BCR contig tables are merged and integrated with scRNA-seq B-cell objects for clonotype-level analyses.
+
+## Step 10. SHM analysis
+Somatic hypermutation frequencies are estimated and compared across groups, time points, and isotypes.
